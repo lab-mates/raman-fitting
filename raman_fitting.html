@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Raman Spectrum Fitting Tool</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; line-height: 1.5; }
+#app { max-width: 1100px; margin: 0 auto; padding: 20px; }
+h1 { font-size: 1.6em; margin-bottom: 8px; }
+h2 { font-size: 1.2em; margin: 18px 0 8px; border-bottom: 2px solid #ddd; padding-bottom: 4px; }
+.section { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.instructions { font-size: 0.9em; color: #666; margin-bottom: 12px; }
+.instructions ol { padding-left: 20px; }
+
+/* File upload */
+#drop-zone { border: 2px dashed #aaa; border-radius: 8px; padding: 30px; text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s; color: #666; }
+#drop-zone.dragover { border-color: #4a90d9; background: #e8f0fe; }
+#drop-zone.loaded { border-color: #4caf50; background: #e8f5e9; }
+#file-info { margin-top: 8px; font-weight: 600; color: #333; }
+
+/* Range controls */
+.range-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.range-row label { font-weight: 600; font-size: 0.9em; }
+.range-row input[type=number] { width: 90px; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; }
+
+/* Band selector */
+.band-checks { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; }
+.band-checks label { display: flex; align-items: center; gap: 4px; font-size: 0.9em; cursor: pointer; }
+
+/* Param table */
+#param-table { width: 100%; border-collapse: collapse; font-size: 0.88em; }
+#param-table th { text-align: left; padding: 6px 4px; border-bottom: 2px solid #ccc; font-weight: 600; }
+#param-table td { padding: 4px; }
+#param-table td:first-child { font-weight: 700; }
+#param-table input[type=number] { width: 90px; padding: 3px 5px; border: 1px solid #ccc; border-radius: 3px; text-align: right; }
+
+/* Warning */
+#warning { background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 8px 12px; margin: 8px 0; font-weight: 600; font-size: 0.9em; display: none; }
+
+/* Buttons */
+.btn { padding: 8px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.95em; font-weight: 600; }
+.btn-fit { background: #4a90d9; color: #fff; }
+.btn-fit:hover { background: #357abd; }
+.btn-fit:disabled { background: #aaa; cursor: default; }
+.btn-download { background: #4caf50; color: #fff; margin-right: 8px; }
+.btn-download:hover { background: #43a047; }
+.btn-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+
+/* Results table */
+#result-table { width: 100%; border-collapse: collapse; font-size: 0.85em; margin-top: 8px; }
+#result-table th, #result-table td { padding: 4px 8px; border: 1px solid #ddd; text-align: right; }
+#result-table th { background: #f0f0f0; font-weight: 600; text-align: center; }
+#result-table td:first-child, #result-table td:nth-child(2) { text-align: left; }
+
+#plot { width: 100%; height: 450px; }
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="app">
+<h1>Raman Spectrum Fitting Tool</h1>
+<div class="section">
+  <div class="instructions">
+    <ol>
+      <li>Upload your spectrum file (two-column <code>.txt</code>: wavenumber and intensity)</li>
+      <li>Adjust the wavenumber range and select bands</li>
+      <li>An initial fit runs automatically &mdash; fine-tune the parameters as needed</li>
+      <li>Click <strong>Fit</strong> to re-fit with your adjusted parameters</li>
+      <li>Download results as Excel files</li>
+    </ol>
+  </div>
+  <div id="drop-zone" tabindex="0">
+    <div>Drop your Raman spectrum file here or click to browse</div>
+    <div id="file-info"></div>
+    <input type="file" id="file-input" accept=".txt" style="display:none">
+  </div>
+</div>
+
+<div id="controls-section" class="section hidden">
+  <h2>Wavenumber Range</h2>
+  <div class="range-row">
+    <label>Min (cm<sup>-1</sup>):</label>
+    <input type="number" id="xmin" step="10">
+    <label>Max (cm<sup>-1</sup>):</label>
+    <input type="number" id="xmax" step="10">
+  </div>
+
+  <h2>Active Bands</h2>
+  <div class="band-checks" id="band-checks"></div>
+
+  <h2>Peak Parameters</h2>
+  <table id="param-table"><thead><tr>
+    <th>Band</th><th>Center (cm<sup>-1</sup>)</th><th>Sigma</th><th>Amplitude</th><th>Fraction (0=G, 1=L)</th>
+  </tr></thead><tbody id="param-tbody"></tbody></table>
+
+  <div id="warning">Parameters were manually changed. Click 'Fit Spectrum' to re-fit.</div>
+
+  <div id="plot"></div>
+
+  <div class="btn-row">
+    <button class="btn btn-fit" id="btn-fit" disabled>Fit Spectrum</button>
+    <span style="color:#666; font-size:0.9em">Adjust parameters above, then click to re-fit.</span>
+  </div>
+</div>
+
+<div id="results-section" class="section hidden">
+  <h2>Fit Result</h2>
+  <div id="chi2-info" style="font-weight:600; margin-bottom:6px;"></div>
+  <table id="result-table"></table>
+  <div class="btn-row" style="margin-top:12px;">
+    <button class="btn btn-download" id="btn-dl-params">Download Fit Parameters (.xlsx)</button>
+    <button class="btn btn-download" id="btn-dl-plot">Download Plot Data (.xlsx)</button>
+  </div>
+</div>
+</div>
+
+<script>
+// ===== Band definitions =====
+const BANDS = [
+  {name:"G",   prefix:"G_",      center:1580, cmin:1550, cmax:1600, sigma:20, smax:40,  amp:10, amax:100, fraction:1},
+  {name:"D",   prefix:"D_",      center:1350, cmin:1300, cmax:1400, sigma:40, smax:100,  amp:10, amax:100, fraction:1},
+  {name:"D'",  prefix:"Dprime_", center:1620, cmin:1600, cmax:1650, sigma:20, smax:40,  amp:1, amax:100, fraction:1},
+  {name:"D3",  prefix:"D3_",     center:1500, cmin:1420, cmax:1550, sigma:100, smax:1000, amp:10, amax:100, fraction:0},
+  {name:"D4",  prefix:"D4_",     center:1100, cmin:1000, cmax:1250, sigma:100, smax:1000, amp:10, amax:100, fraction:0},
+  {name:"2D1", prefix:"twoD1_",  center:2680, cmin:2600, cmax:2750, sigma:40, smax:1000, amp:10, amax:100, fraction:0.8},
+  {name:"2D2", prefix:"twoD2_",  center:2450, cmin:2400, cmax:2500, sigma:40, smax:200,  amp:10, amax:100, fraction:0.8},
+  {name:"2D3", prefix:"twoD3_",  center:2950, cmin:2900, cmax:3000, sigma:40, smax:200,  amp:10, amax:100, fraction:0.8},
+];
+const PEAK_COLORS = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#bcbd22'];
+
+// ===== App state =====
+const S = {
+  rawX: null, rawY: null,
+  x: null, y: null,
+  xmin: 800, xmax: 3100,
+  activeBands: [],
+  bandParams: {},  // {bandName: {center, sigma, amp, fraction}}
+  fitResult: null, // {params, stderr, reducedChi2, bestFit, components, paramInfo}
+  paramsChanged: false,
+};
+
+// ===== Pseudo-Voigt model (matching lmfit) =====
+const S2PI = Math.sqrt(2 * Math.PI);
+
+function pvPoint(x, center, sigma, amplitude, fraction) {
+  const dx = x - center;
+  const g = (amplitude / (S2PI * sigma)) * Math.exp(-dx * dx / (2 * sigma * sigma));
+  const l = (amplitude / (Math.PI * sigma)) / (1 + (dx / sigma) * (dx / sigma));
+  return (1 - fraction) * g + fraction * l;
+}
+
+function evalPeak(xArr, center, sigma, amplitude, fraction) {
+  const n = xArr.length, out = new Float64Array(n);
+  for (let i = 0; i < n; i++) out[i] = pvPoint(xArr[i], center, sigma, amplitude, fraction);
+  return out;
+}
+
+function evalModel(xArr, flatParams) {
+  // flatParams: [center0, sigma0, amp0, frac0, center1, ...]
+  const n = xArr.length, out = new Float64Array(n);
+  for (let p = 0; p < flatParams.length; p += 4) {
+    for (let i = 0; i < n; i++) {
+      out[i] += pvPoint(xArr[i], flatParams[p], flatParams[p+1], flatParams[p+2], flatParams[p+3]);
+    }
+  }
+  return out;
+}
+
+// ===== Linear algebra =====
+function solveLinear(A, b) {
+  const n = b.length;
+  const M = A.map((r, i) => [...r, b[i]]);
+  for (let col = 0; col < n; col++) {
+    let maxRow = col, maxVal = Math.abs(M[col][col]);
+    for (let r = col + 1; r < n; r++) {
+      const v = Math.abs(M[r][col]);
+      if (v > maxVal) { maxVal = v; maxRow = r; }
+    }
+    if (maxVal < 1e-15) return null;
+    [M[col], M[maxRow]] = [M[maxRow], M[col]];
+    const pivot = M[col][col];
+    for (let j = col; j <= n; j++) M[col][j] /= pivot;
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const f = M[r][col];
+      for (let j = col; j <= n; j++) M[r][j] -= f * M[col][j];
+    }
+  }
+  return M.map(r => r[n]);
+}
+
+function invertMatrix(A) {
+  const n = A.length;
+  const inv = Array.from({length: n}, () => new Float64Array(n));
+  for (let col = 0; col < n; col++) {
+    const e = new Float64Array(n); e[col] = 1;
+    const x = solveLinear(A, Array.from(e));
+    if (!x) return null;
+    for (let r = 0; r < n; r++) inv[r][col] = x[r];
+  }
+  return inv;
+}
+
+// ===== Levenberg-Marquardt =====
+function levenbergMarquardt(xArr, yArr, flatParams, bounds, fixed, maxIter = 200, tol = 1e-7) {
+  const n = xArr.length;
+  const nParams = flatParams.length;
+  const freeIdx = [];
+  for (let i = 0; i < nParams; i++) if (!fixed[i]) freeIdx.push(i);
+  const m = freeIdx.length;
+  if (m === 0) return null;
+
+  let params = Float64Array.from(flatParams);
+  let lambda = 1e-3;
+
+  function clamp(p) {
+    const c = Float64Array.from(p);
+    for (let i = 0; i < nParams; i++) {
+      if (bounds[i]) {
+        if (bounds[i].min != null) c[i] = Math.max(c[i], bounds[i].min);
+        if (bounds[i].max != null) c[i] = Math.min(c[i], bounds[i].max);
+      }
+    }
+    return c;
+  }
+
+  function residuals(p) {
+    const yPred = evalModel(xArr, p);
+    const r = new Float64Array(n);
+    for (let i = 0; i < n; i++) r[i] = yArr[i] - yPred[i];
+    return r;
+  }
+
+  function jacobian(p) {
+    // J[i][j] = d(model(x_i)) / d(p_freeIdx[j])
+    const J = Array.from({length: n}, () => new Float64Array(m));
+    const f0 = evalModel(xArr, p);
+    for (let j = 0; j < m; j++) {
+      const idx = freeIdx[j];
+      const h = Math.max(1e-8, Math.abs(p[idx]) * 1e-8);
+      const pp = Float64Array.from(p);
+      pp[idx] += h;
+      const clampedPP = clamp(pp);
+      const actualH = clampedPP[idx] - p[idx];
+      if (Math.abs(actualH) < 1e-15) continue;
+      const fp = evalModel(xArr, clampedPP);
+      for (let i = 0; i < n; i++) J[i][j] = (fp[i] - f0[i]) / actualH;
+    }
+    return J;
+  }
+
+  params = clamp(params);
+  let r = residuals(params);
+  let chi2 = r.reduce((s, v) => s + v * v, 0);
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    const J = jacobian(params);
+
+    // J^T J and J^T r
+    const JtJ = Array.from({length: m}, () => new Float64Array(m));
+    const Jtr = new Float64Array(m);
+    for (let j = 0; j < m; j++) {
+      for (let k = j; k < m; k++) {
+        let s = 0;
+        for (let i = 0; i < n; i++) s += J[i][j] * J[i][k];
+        JtJ[j][k] = s; JtJ[k][j] = s;
+      }
+      let s = 0;
+      for (let i = 0; i < n; i++) s += J[i][j] * r[i];
+      Jtr[j] = s;
+    }
+
+    // (J^T J + lambda * diag(J^T J)) * delta = J^T r
+    const A = JtJ.map(row => Float64Array.from(row));
+    for (let j = 0; j < m; j++) A[j][j] += lambda * (JtJ[j][j] || 1);
+
+    const delta = solveLinear(A.map(r => Array.from(r)), Array.from(Jtr));
+    if (!delta) { lambda *= 10; continue; }
+
+    const newP = Float64Array.from(params);
+    for (let j = 0; j < m; j++) newP[freeIdx[j]] += delta[j];
+    const clampedNew = clamp(newP);
+    const newR = residuals(clampedNew);
+    const newChi2 = newR.reduce((s, v) => s + v * v, 0);
+
+    if (newChi2 < chi2) {
+      const improvement = (chi2 - newChi2) / (chi2 || 1);
+      params = clampedNew; r = newR; chi2 = newChi2;
+      lambda = Math.max(lambda * 0.1, 1e-10);
+      if (improvement < tol && iter > 5) break;
+    } else {
+      lambda = Math.min(lambda * 10, 1e10);
+      if (lambda >= 1e10) break;
+    }
+  }
+
+  // Compute stderr from covariance
+  const dof = Math.max(1, n - m);
+  const reducedChi2 = chi2 / dof;
+  const J = jacobian(params);
+  const JtJ = Array.from({length: m}, () => new Float64Array(m));
+  for (let j = 0; j < m; j++) {
+    for (let k = j; k < m; k++) {
+      let s = 0;
+      for (let i = 0; i < n; i++) s += J[i][j] * J[i][k];
+      JtJ[j][k] = s; JtJ[k][j] = s;
+    }
+  }
+  const cov = invertMatrix(JtJ.map(r => Array.from(r)));
+  const stderr = new Array(nParams).fill(null);
+  if (cov) {
+    for (let j = 0; j < m; j++) {
+      const v = cov[j][j] * reducedChi2;
+      if (v > 0) stderr[freeIdx[j]] = Math.sqrt(v);
+    }
+  }
+
+  return { params: Array.from(params), stderr, chi2, reducedChi2 };
+}
+
+// ===== Data processing =====
+function parseDataFile(text) {
+  const lines = text.trim().replace(/\r/g, '').split('\n');
+  const xs = [], ys = [];
+  for (const line of lines) {
+    const parts = line.trim().split(/[\t\s]+/);
+    if (parts.length < 2) continue;
+    const xv = parseFloat(parts[0]), yv = parseFloat(parts[1]);
+    if (isNaN(xv) || isNaN(yv)) continue;
+    xs.push(xv); ys.push(yv);
+  }
+  return { x: new Float64Array(xs), y: new Float64Array(ys) };
+}
+
+function filterAndNormalize(rawX, rawY, xmin, xmax) {
+  const xs = [], ys = [];
+  for (let i = 0; i < rawX.length; i++) {
+    if (rawX[i] >= xmin && rawX[i] <= xmax) { xs.push(rawX[i]); ys.push(rawY[i]); }
+  }
+  const x = new Float64Array(xs);
+  let y = new Float64Array(ys);
+  let minAbs = Infinity;
+  for (let i = 0; i < y.length; i++) minAbs = Math.min(minAbs, Math.abs(y[i]));
+  const yShifted = new Float64Array(y.length);
+  for (let i = 0; i < y.length; i++) yShifted[i] = y[i] - minAbs;
+  // dx = min diff
+  let dx = Infinity;
+  for (let i = 1; i < x.length; i++) dx = Math.min(dx, x[i] - x[i-1]);
+  let area = 0;
+  for (let i = 0; i < yShifted.length; i++) area += yShifted[i];
+  area *= dx;
+  const yNorm = new Float64Array(y.length);
+  for (let i = 0; i < y.length; i++) yNorm[i] = 100 * yShifted[i] / area;
+  return { x, y: yNorm };
+}
+
+// ===== Fit logic =====
+function buildFlatParams(activeBands, bandParams) {
+  const values = [], bounds = [], fixed = [], info = [];
+  for (const b of activeBands) {
+    const bp = bandParams[b.name];
+    info.push({band: b, param: 'center'});
+    values.push(bp.center); bounds.push({min: b.cmin, max: b.cmax}); fixed.push(false);
+    info.push({band: b, param: 'sigma'});
+    values.push(bp.sigma); bounds.push({min: 1, max: b.smax}); fixed.push(false);
+    info.push({band: b, param: 'amplitude'});
+    values.push(bp.amp); bounds.push({min: 0, max: b.amax}); fixed.push(false);
+    info.push({band: b, param: 'fraction'});
+    values.push(bp.fraction);
+    if (bp.fraction === 0 || bp.fraction === 1) {
+      bounds.push({min: bp.fraction, max: bp.fraction}); fixed.push(true);
+    } else {
+      bounds.push({min: 0, max: 1}); fixed.push(false);
+    }
+  }
+  return { values, bounds, fixed, info };
+}
+
+function doFit() {
+  if (!S.x || S.activeBands.length === 0) return;
+  const { values, bounds, fixed, info } = buildFlatParams(S.activeBands, S.bandParams);
+  const result = levenbergMarquardt(S.x, S.y, values, bounds, fixed);
+  if (!result) return;
+
+  // Extract per-band results
+  const fittedParams = {};
+  const components = {};
+  for (let bi = 0; bi < S.activeBands.length; bi++) {
+    const b = S.activeBands[bi];
+    const base = bi * 4;
+    fittedParams[b.name] = {
+      center: result.params[base],
+      sigma: result.params[base + 1],
+      amp: result.params[base + 2],
+      fraction: result.params[base + 3],
+      center_stderr: result.stderr[base],
+      sigma_stderr: result.stderr[base + 1],
+      amp_stderr: result.stderr[base + 2],
+      fraction_stderr: result.stderr[base + 3],
+    };
+    components[b.name] = evalPeak(S.x, result.params[base], result.params[base+1], result.params[base+2], result.params[base+3]);
+  }
+
+  const bestFit = evalModel(S.x, result.params);
+  S.fitResult = { fittedParams, components, bestFit, reducedChi2: result.reducedChi2 };
+
+  // Push fitted values back to bandParams
+  for (const b of S.activeBands) {
+    const fp = fittedParams[b.name];
+    S.bandParams[b.name] = { center: fp.center, sigma: fp.sigma, amp: fp.amp, fraction: fp.fraction };
+  }
+  S.paramsChanged = false;
+}
+
+// ===== UI rendering =====
+function getActiveBandNames() {
+  const checks = document.querySelectorAll('#band-checks input[type=checkbox]');
+  const names = [];
+  checks.forEach(cb => { if (cb.checked) names.push(cb.value); });
+  return names;
+}
+
+function renderBandSelector() {
+  const container = document.getElementById('band-checks');
+  container.innerHTML = '';
+  for (const b of BANDS) {
+    const inRange = b.center >= S.xmin && b.center <= S.xmax;
+    const lbl = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.value = b.name;
+    cb.checked = inRange;
+    cb.addEventListener('change', onBandSelectionChange);
+    lbl.appendChild(cb);
+    lbl.appendChild(document.createTextNode(' ' + b.name));
+    container.appendChild(lbl);
+  }
+}
+
+function initBandParams() {
+  for (const b of BANDS) {
+    if (!S.bandParams[b.name]) {
+      S.bandParams[b.name] = { center: b.center, sigma: b.sigma, amp: b.amp, fraction: b.fraction };
+    }
+  }
+}
+
+function renderParamTable() {
+  const tbody = document.getElementById('param-tbody');
+  tbody.innerHTML = '';
+  for (const b of S.activeBands) {
+    const bp = S.bandParams[b.name];
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${b.name}</td>
+      <td><input type="number" data-band="${b.name}" data-param="center" value="${bp.center}" min="${b.cmin}" max="${b.cmax}" step="1"></td>
+      <td><input type="number" data-band="${b.name}" data-param="sigma" value="${bp.sigma}" min="1" max="${b.smax}" step="1"></td>
+      <td><input type="number" data-band="${b.name}" data-param="amp" value="${bp.amp}" min="0" max="${b.amax}" step="0.5"></td>
+      <td><input type="number" data-band="${b.name}" data-param="fraction" value="${bp.fraction}" min="0" max="1" step="0.1"></td>
+    `;
+    tbody.appendChild(tr);
+  }
+  // Attach listeners
+  tbody.querySelectorAll('input[type=number]').forEach(inp => {
+    inp.addEventListener('input', onParamInput);
+  });
+}
+
+function updatePlot() {
+  if (!S.x || S.activeBands.length === 0) return;
+  const traces = [];
+  // Data
+  traces.push({ x: Array.from(S.x), y: Array.from(S.y), mode: 'markers', marker: { size: 3, color: 'gray', opacity: 0.5 }, name: 'Data' });
+
+  const total = new Float64Array(S.x.length);
+  S.activeBands.forEach((b, idx) => {
+    const bp = S.bandParams[b.name];
+    const peak = evalPeak(S.x, bp.center, bp.sigma, bp.amp, bp.fraction);
+    for (let i = 0; i < peak.length; i++) total[i] += peak[i];
+    traces.push({ x: Array.from(S.x), y: Array.from(peak), fill: 'tozeroy', fillcolor: hexToRgba(PEAK_COLORS[idx % PEAK_COLORS.length], 0.3),
+      line: { color: PEAK_COLORS[idx % PEAK_COLORS.length], width: 1 }, name: b.name });
+  });
+  traces.push({ x: Array.from(S.x), y: Array.from(total), mode: 'lines', line: { color: 'red', width: 2 }, name: 'Sum' });
+
+  // Residual
+  const resid = new Float64Array(S.x.length);
+  for (let i = 0; i < S.x.length; i++) resid[i] = S.y[i] - total[i] - 0.1;
+  traces.push({ x: Array.from(S.x), y: Array.from(resid), mode: 'lines', line: { color: 'green', width: 1 }, opacity: 0.5, name: 'Residual' });
+
+  const layout = {
+    xaxis: { title: 'Wavenumber (cm⁻¹)', range: [S.xmin, S.xmax] },
+    yaxis: { title: 'Intensity (a.u.)' },
+    title: 'Spectrum and peaks (updates live)',
+    margin: { t: 40, b: 50, l: 60, r: 20 },
+    legend: { x: 1, xanchor: 'right', y: 1 },
+    showlegend: true,
+  };
+  Plotly.react('plot', traces, layout, { responsive: true });
+}
+
+function renderResults() {
+  const section = document.getElementById('results-section');
+  if (!S.fitResult) { section.classList.add('hidden'); return; }
+  section.classList.remove('hidden');
+
+  document.getElementById('chi2-info').textContent = `Reduced χ² = ${S.fitResult.reducedChi2.toExponential(4)}`;
+
+  const table = document.getElementById('result-table');
+  let html = '<thead><tr><th>Band</th><th>Parameter</th><th>Value</th><th>Std Error</th></tr></thead><tbody>';
+  for (const b of S.activeBands) {
+    const fp = S.fitResult.fittedParams[b.name];
+    if (!fp) continue;
+    for (const [pname, label] of [['center','center'],['sigma','sigma'],['amp','amplitude'],['fraction','fraction']]) {
+      const val = fp[pname];
+      const err = fp[pname + '_stderr'];
+      html += `<tr><td>${b.name}</td><td>${label}</td><td>${val.toFixed(4)}</td><td>${err != null ? err.toFixed(4) : '—'}</td></tr>`;
+    }
+  }
+  // G/D ratio
+  const gp = S.fitResult.fittedParams['G'], dp = S.fitResult.fittedParams['D'];
+  if (gp && dp && dp.amp !== 0) {
+    const ratio = gp.amp / dp.amp;
+    let ratioErr = '—';
+    if (gp.amp_stderr != null && dp.amp_stderr != null) {
+      ratioErr = (ratio * (gp.amp_stderr / gp.amp + dp.amp_stderr / dp.amp)).toFixed(4);
+    }
+    html += `<tr><td colspan="2"><strong>G/D ratio</strong></td><td>${ratio.toFixed(4)}</td><td>${ratioErr}</td></tr>`;
+  }
+  html += '</tbody>';
+  table.innerHTML = html;
+}
+
+function updateWarning() {
+  document.getElementById('warning').style.display = S.paramsChanged ? 'block' : 'none';
+}
+
+// ===== Excel export =====
+function downloadParamsXlsx() {
+  if (!S.fitResult) return;
+  const rows = [['Band', 'Parameter', 'Value', 'Std Error']];
+  for (const b of S.activeBands) {
+    const fp = S.fitResult.fittedParams[b.name];
+    if (!fp) continue;
+    for (const [p, label] of [['center','center'],['sigma','sigma'],['amp','amplitude'],['fraction','fraction']]) {
+      rows.push([b.name, label, fp[p], fp[p + '_stderr']]);
+    }
+  }
+  const gp = S.fitResult.fittedParams['G'], dp = S.fitResult.fittedParams['D'];
+  if (gp && dp && dp.amp !== 0) {
+    const ratio = gp.amp / dp.amp;
+    let err = null;
+    if (gp.amp_stderr != null && dp.amp_stderr != null) err = ratio * (gp.amp_stderr / gp.amp + dp.amp_stderr / dp.amp);
+    rows.push(['G/D', 'ratio', ratio, err]);
+  }
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Fit Parameters');
+  XLSX.writeFile(wb, 'result_table.xlsx');
+}
+
+function downloadPlotXlsx() {
+  if (!S.fitResult) return;
+  const headers = ['wavenumber', 'observed', 'fitted', 'residual'];
+  for (const b of S.activeBands) headers.push(b.name);
+  const rows = [headers];
+  for (let i = 0; i < S.x.length; i++) {
+    const row = [S.x[i], S.y[i], S.fitResult.bestFit[i], S.y[i] - S.fitResult.bestFit[i]];
+    for (const b of S.activeBands) row.push(S.fitResult.components[b.name]?.[i] ?? 0);
+    rows.push(row);
+  }
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Plot Data');
+  XLSX.writeFile(wb, 'result_plot.xlsx');
+}
+
+// ===== Helpers =====
+function hexToRgba(hex, alpha) {
+  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+// ===== Event handlers =====
+function onFileLoaded(text, filename) {
+  const data = parseDataFile(text);
+  if (data.x.length < 10) { alert('Could not parse file. Expected two-column space/tab-separated data.'); return; }
+  S.rawX = data.x; S.rawY = data.y;
+
+  const lo = Math.floor(data.x[0]), hi = Math.ceil(data.x[data.x.length - 1]);
+  S.xmin = Math.max(lo, 800); S.xmax = Math.min(hi, 3100);
+  document.getElementById('xmin').value = S.xmin;
+  document.getElementById('xmin').min = lo; document.getElementById('xmin').max = hi;
+  document.getElementById('xmax').value = S.xmax;
+  document.getElementById('xmax').min = lo; document.getElementById('xmax').max = hi;
+
+  document.getElementById('file-info').textContent = `${filename} — ${data.x.length} points, ${lo}–${hi} cm⁻¹`;
+  document.getElementById('drop-zone').classList.add('loaded');
+  document.getElementById('controls-section').classList.remove('hidden');
+
+  processDataAndFit();
+}
+
+function processDataAndFit() {
+  const filtered = filterAndNormalize(S.rawX, S.rawY, S.xmin, S.xmax);
+  S.x = filtered.x; S.y = filtered.y;
+  initBandParams();
+  renderBandSelector();
+  syncActiveBands();
+  // Reset params to defaults for active bands
+  for (const b of S.activeBands) {
+    S.bandParams[b.name] = { center: b.center, sigma: b.sigma, amp: b.amp, fraction: b.fraction };
+  }
+  renderParamTable();
+  document.getElementById('btn-fit').disabled = false;
+  // Auto-fit
+  doFit();
+  // Push fitted values to param table
+  renderParamTable();
+  updatePlot();
+  renderResults();
+  updateWarning();
+}
+
+function syncActiveBands() {
+  const names = getActiveBandNames();
+  S.activeBands = BANDS.filter(b => names.includes(b.name));
+}
+
+function onRangeChange() {
+  S.xmin = parseFloat(document.getElementById('xmin').value) || 800;
+  S.xmax = parseFloat(document.getElementById('xmax').value) || 3100;
+  if (S.rawX) processDataAndFit();
+}
+
+function onBandSelectionChange() {
+  syncActiveBands();
+  initBandParams();
+  renderParamTable();
+  S.paramsChanged = true;
+  updatePlot();
+  updateWarning();
+}
+
+function onParamInput(e) {
+  const band = e.target.dataset.band;
+  const param = e.target.dataset.param;
+  const val = parseFloat(e.target.value);
+  if (isNaN(val)) return;
+  S.bandParams[band][param] = val;
+  S.paramsChanged = true;
+  updatePlot();
+  updateWarning();
+}
+
+function onFitClick() {
+  doFit();
+  renderParamTable();
+  updatePlot();
+  renderResults();
+  updateWarning();
+}
+
+// ===== File upload setup =====
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) { const r = new FileReader(); r.onload = () => onFileLoaded(r.result, file.name); r.readAsText(file); }
+});
+fileInput.addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (file) { const r = new FileReader(); r.onload = () => onFileLoaded(r.result, file.name); r.readAsText(file); }
+});
+
+// ===== Range and fit button =====
+document.getElementById('xmin').addEventListener('change', onRangeChange);
+document.getElementById('xmax').addEventListener('change', onRangeChange);
+document.getElementById('btn-fit').addEventListener('click', onFitClick);
+document.getElementById('btn-dl-params').addEventListener('click', downloadParamsXlsx);
+document.getElementById('btn-dl-plot').addEventListener('click', downloadPlotXlsx);
+</script>
+</body>
+</html>
