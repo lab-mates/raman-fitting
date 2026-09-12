@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.16.5"
+__generated_with = "0.21.1"
 app = marimo.App(width="medium", app_title="Raman Spectrum Fitting")
 
 
@@ -13,13 +13,13 @@ def _():
     import pandas as pd
     import io
     import openpyxl  # explicit import for WASM dependency detection
+
     return PseudoVoigtModel, io, mo, np, pd, plt
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
+    mo.md("""
     # Raman Spectrum Fitting Tool
 
     Interactive pseudo-Voigt peak fitting for Raman spectroscopy data.
@@ -29,8 +29,7 @@ def _(mo):
     3. An initial fit runs automatically — fine-tune the parameters as needed
     4. Click **Fit** to re-fit with your adjusted parameters
     5. Download results as Excel files
-    """
-    )
+    """)
     return
 
 
@@ -49,15 +48,15 @@ def _(mo):
 def _(file_upload, io, mo, np):
     mo.stop(not file_upload.value, mo.md("*Upload a `.txt` spectrum file to begin.*"))
     _contents = file_upload.value[0].contents
-    _filename = file_upload.value[0].name
+    infilename = file_upload.value[0].name
     raw_data = np.loadtxt(io.BytesIO(_contents))
     raw_x = raw_data[:, 0]
     raw_y = raw_data[:, 1]
     mo.md(
-        f"**{_filename}** loaded — {len(raw_x)} points, "
+        f"**{infilename}** loaded — {len(raw_x)} points, "
         f"{raw_x.min():.0f}–{raw_x.max():.0f} cm-1"
     )
-    return raw_x, raw_y
+    return infilename, raw_x, raw_y
 
 
 @app.cell
@@ -68,7 +67,7 @@ def _(mo, raw_x):
         start=_lo,
         stop=_hi,
         step=10,
-        value=[max(_lo, 800), min(_hi, 3100)],
+        value=[max(_lo, 1000), min(_hi, 3100)],
         label="**Wavenumber range (cm-1)**",
         full_width=True,
     )
@@ -159,6 +158,7 @@ def _(PseudoVoigtModel):
             _extracted[f"{_key}_amp"] = _result.params[_prefix + "amplitude"].value
             _extracted[f"{_key}_fraction"] = _result.params[_prefix + "fraction"].value
         return _result, _extracted
+
     return (do_fit,)
 
 
@@ -318,7 +318,7 @@ def _(
 
 
 @app.cell
-def _(get_fit_result, io, mo, np, pd, x, y):
+def _(get_fit_result, infilename, io, mo, np, pd, x, y):
     _result = get_fit_result()
     mo.stop(_result is None)
 
@@ -378,13 +378,13 @@ def _(get_fit_result, io, mo, np, pd, x, y):
         mo.hstack([
             mo.download(
                 _buf_table.getvalue(),
-                filename="result_table.xlsx",
+                filename=infilename + "_result_table.xlsx",
                 mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 label="Download Fit Parameters (.xlsx)",
             ),
             mo.download(
                 _buf_plot.getvalue(),
-                filename="result_plot.xlsx",
+                filename=infilename + "_result_plot.xlsx",
                 mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 label="Download Plot Data (.xlsx)",
             ),
